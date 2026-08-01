@@ -17,6 +17,7 @@ CAMPAIGN_SHIELDING_MATERIALS = (
     CUSTOM_SHIELD_MATERIAL,
 )
 MLC1_REFERENCE_LEVELS_MM = (8, 12, 16)
+MLC2_REFERENCE_TO_ACTUAL_RATIO = 0.9025
 MIN_FLUX_P_CM2_S = 1.0e3
 MAX_FLUX_P_CM2_S = 1.0e8
 DEFAULT_FLUX_P_CM2_S = 1.0e7
@@ -27,35 +28,35 @@ class ShieldConfiguration:
     """One operator-selectable campaign shielding configuration."""
 
     material: str
-    reference_mm: int
+    reference_mm: float
     actual_thickness_mm: float
     configuration_id: str
 
 
 SHIELD_CONFIGURATIONS: dict[str, dict[int, ShieldConfiguration]] = {
     "Bare": {
-        0: ShieldConfiguration("Bare", 0, 0.0, "B00"),
+        0: ShieldConfiguration("Bare", 0.0, 0.0, "B00"),
     },
     "MLC1": {
-        8: ShieldConfiguration("MLC1", 8, 8.00, "M1-08"),
-        12: ShieldConfiguration("MLC1", 12, 12.00, "M1-12"),
-        16: ShieldConfiguration("MLC1", 16, 16.00, "M1-16"),
+        8: ShieldConfiguration("MLC1", 8.0, 8.00, "M1-08"),
+        12: ShieldConfiguration("MLC1", 12.0, 12.00, "M1-12"),
+        16: ShieldConfiguration("MLC1", 16.0, 16.00, "M1-16"),
     },
     "MLC2": {
-        8: ShieldConfiguration("MLC2", 8, 7.22, "M2-E08"),
-        12: ShieldConfiguration("MLC2", 12, 10.83, "M2-E12"),
-        16: ShieldConfiguration("MLC2", 16, 14.44, "M2-E16"),
+        8: ShieldConfiguration("MLC2", 8.0, 7.22, "M2-E08"),
+        12: ShieldConfiguration("MLC2", 12.0, 10.83, "M2-E12"),
+        16: ShieldConfiguration("MLC2", 16.0, 14.44, "M2-E16"),
     },
     "Aluminium": {
-        8: ShieldConfiguration("Aluminium", 8, 3.85, "AL-E08"),
-        12: ShieldConfiguration("Aluminium", 12, 5.78, "AL-E12"),
-        16: ShieldConfiguration("Aluminium", 16, 7.71, "AL-E16"),
+        8: ShieldConfiguration("Aluminium", 8.0, 3.85, "AL-E08"),
+        12: ShieldConfiguration("Aluminium", 12.0, 5.78, "AL-E12"),
+        16: ShieldConfiguration("Aluminium", 16.0, 7.71, "AL-E16"),
     },
 }
 
 
 def reference_levels_for(material: str) -> tuple[int, ...]:
-    """Return valid MLC reference selections for one predefined material."""
+    """Return preset reference selections for one predefined material."""
 
     if material == CUSTOM_SHIELD_MATERIAL:
         return ()
@@ -87,8 +88,62 @@ def get_shield_configuration(
         allowed = reference_levels_for(material)
         raise ValueError(
             f"Unsupported reference level {reference_mm} for {material}. "
-            f"Allowed values: {allowed}"
+            f"Allowed preset values: {allowed}"
         ) from error
+
+
+def _validate_positive_number(value: float, field_name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{field_name} must be numeric")
+
+    numeric = float(value)
+    if not math.isfinite(numeric) or numeric <= 0:
+        raise ValueError(f"{field_name} must be greater than 0")
+    return numeric
+
+
+def _format_reference_token(reference_mm: float) -> str:
+    """Format a reference value for a human-readable configuration ID."""
+
+    if reference_mm.is_integer():
+        return f"{int(reference_mm):02d}"
+    return f"{reference_mm:g}"
+
+
+def create_reference_shield_configuration(
+    material: str,
+    reference_mm: float,
+) -> ShieldConfiguration:
+    """Resolve MLC1/MLC2 presets or calculate a typed custom reference level.
+
+    Existing 8/12/16 mappings are returned verbatim. Other positive values are
+    coordinator-side preview configurations until the deployed DUT protocol accepts
+    arbitrary reference levels.
+    """
+
+    if material not in ("MLC1", "MLC2"):
+        raise ValueError("custom reference levels are supported only for MLC1/MLC2")
+
+    reference = _validate_positive_number(reference_mm, "reference_mm")
+
+    for preset in MLC1_REFERENCE_LEVELS_MM:
+        if math.isclose(reference, float(preset), rel_tol=0.0, abs_tol=1e-9):
+            return SHIELD_CONFIGURATIONS[material][preset]
+
+    token = _format_reference_token(reference)
+    if material == "MLC1":
+        actual = reference
+        configuration_id = f"M1-R{token}"
+    else:
+        actual = round(reference * MLC2_REFERENCE_TO_ACTUAL_RATIO, 2)
+        configuration_id = f"M2-E{token}"
+
+    return ShieldConfiguration(
+        material=material,
+        reference_mm=reference,
+        actual_thickness_mm=actual,
+        configuration_id=configuration_id,
+    )
 
 
 def create_custom_shield_configuration(
@@ -104,16 +159,14 @@ def create_custom_shield_configuration(
     if not normalized_name:
         raise ValueError("custom shield name is required")
 
-    if isinstance(thickness_mm, bool) or not isinstance(thickness_mm, (int, float)):
-        raise TypeError("custom shield thickness must be numeric")
-
-    numeric_thickness = float(thickness_mm)
-    if not math.isfinite(numeric_thickness) or numeric_thickness <= 0:
-        raise ValueError("custom shield thickness must be greater than 0")
+    numeric_thickness = _validate_positive_number(
+        thickness_mm,
+        "custom shield thickness",
+    )
 
     return ShieldConfiguration(
         material=normalized_name,
-        reference_mm=0,
+        reference_mm=0.0,
         actual_thickness_mm=numeric_thickness,
         configuration_id="CUSTOM",
     )
@@ -142,6 +195,18 @@ def calculate_fluence(
     return float(flux_p_cm2_s) * float(elapsed_seconds)
 
 
+def validate_flux(flux_p_cm2_s: float) -> float:
+    """Validate a facility flux against the GUI's supported operating range."""
+
+    numeric = _validate_positive_number(flux_p_cm2_s, "flux_p_cm2_s")
+    if not MIN_FLUX_P_CM2_S <= numeric <= MAX_FLUX_P_CM2_S:
+        raise ValueError(
+            "flux_p_cm2_s must be between "
+            f"{MIN_FLUX_P_CM2_S:.0e} and {MAX_FLUX_P_CM2_S:.0e}"
+        )
+    return numeric
+
+
 def format_scientific(value: float) -> str:
     """Format a run quantity using compact scientific notation."""
 
@@ -165,7 +230,7 @@ def format_campaign_summary(
 
     return (
         f"{beam_energy_mev} MeV | {configuration.material} | "
-        f"ref {configuration.reference_mm} mm -> "
+        f"ref {configuration.reference_mm:g} mm -> "
         f"actual {configuration.actual_thickness_mm:.2f} mm | "
         f"{configuration.configuration_id}"
     )
