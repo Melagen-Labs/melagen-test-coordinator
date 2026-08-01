@@ -32,8 +32,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
+from power_telemetry_protocol import (
+    DEFAULT_POWER_TELEMETRY_PORT,
+    UdpTelemetryPublisher,
+)
+
 SCHEMA_VERSION = 1
-SOFTWARE_VERSION = "0.2.0"
+SOFTWARE_VERSION = "0.3.0"
 
 MEASUREMENT_STARTING = "STARTING"
 MEASUREMENT_LOW = "LOW"
@@ -347,6 +352,11 @@ class SensorReading:
 class CurrentSource(Protocol):
     def read(self) -> SensorReading:
         """Return one coherent current reading or raise a sensor exception."""
+
+
+class RecordPublisher(Protocol):
+    def publish(self, record: dict[str, object]) -> bool | None:
+        """Publish one already-persisted record."""
 
 
 @dataclass(frozen=True)
@@ -1124,6 +1134,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--run-id", default="unassigned")
     parser.add_argument("--jetson-id", default=socket.gethostname())
+    parser.add_argument(
+        "--telemetry-host",
+        default=None,
+        help=(
+            "Laptop address for best-effort UDP power telemetry. "
+            "Omit to disable network publishing."
+        ),
+    )
+    parser.add_argument(
+        "--telemetry-port",
+        type=int,
+        default=DEFAULT_POWER_TELEMETRY_PORT,
+        help=(
+            "Laptop UDP power telemetry port "
+            f"(default: {DEFAULT_POWER_TELEMETRY_PORT})."
+        ),
+    )
 
     # Backward-compatible command-line overrides.
     parser.add_argument("--nominal-current-a", type=float, default=None)
@@ -1197,6 +1224,25 @@ def _event_payload(
     return payload
 
 
+def _append_and_publish(
+    writer: JsonlWriter,
+    publisher: RecordPublisher | None,
+    record: dict[str, object],
+    *,
+    force_sync: bool = False,
+) -> None:
+    """Persist locally first, then mirror best-effort live telemetry."""
+    writer.append(record, force_sync=force_sync)
+    if publisher is not None:
+        try:
+            publisher.publish(record)
+        except (OSError, TypeError, ValueError) as error:
+            print(
+                f"POWER_TELEMETRY_PUBLISH_FAILED: {error}",
+                file=sys.stderr,
+            )
+
+
 def run_monitor(
     source: CurrentSource,
     config: MonitorConfig,
@@ -1204,6 +1250,7 @@ def run_monitor(
     *,
     identity: MonitorIdentity | None = None,
     max_samples: int | None = None,
+    telemetry_publisher: RecordPublisher | None = None,
 ) -> int:
     """Run the monitor until interrupted or the attempt limit is reached."""
     config.validate()
@@ -1228,7 +1275,9 @@ def run_monitor(
 
     with JsonlWriter(log_path, config.sync_interval_seconds) as writer:
         started_ns = time.monotonic_ns()
-        writer.append(
+        _append_and_publish(
+            writer,
+            telemetry_publisher,
             records.create(
                 record_type="monitor_startup",
                 event_type="POWER_MONITOR_STARTED",
@@ -1284,7 +1333,12 @@ def run_monitor(
                             monotonic_ns=cycle_started_ns,
                             payload=_event_payload(result, event),
                         )
-                        writer.append(event_record, force_sync=True)
+                        _append_and_publish(
+                            writer,
+                            telemetry_publisher,
+                            event_record,
+                            force_sync=True,
+                        )
                         print(json.dumps(event_record, indent=2), flush=True)
 
                     elapsed_seconds = (
@@ -1333,7 +1387,11 @@ def run_monitor(
                         ),
                     },
                 )
-                writer.append(sample_record)
+                _append_and_publish(
+                    writer,
+                    telemetry_publisher,
+                    sample_record,
+                )
 
                 for event in result.events:
                     event_record = records.create(
@@ -1342,7 +1400,12 @@ def run_monitor(
                         monotonic_ns=cycle_started_ns,
                         payload=_event_payload(result, event),
                     )
-                    writer.append(event_record, force_sync=True)
+                    _append_and_publish(
+                        writer,
+                        telemetry_publisher,
+                        event_record,
+                        force_sync=True,
+                    )
                     print(json.dumps(event_record, indent=2), flush=True)
 
                 elapsed_seconds = (
@@ -1364,7 +1427,9 @@ def run_monitor(
             stopped = detector.stop()
             try:
                 for event in stopped.events:
-                    writer.append(
+                    _append_and_publish(
+                        writer,
+                        telemetry_publisher,
                         records.create(
                             record_type="power_state_event",
                             event_type=event.event_type,
@@ -1373,7 +1438,9 @@ def run_monitor(
                         ),
                         force_sync=True,
                     )
-                writer.append(
+                _append_and_publish(
+                    writer,
+                    telemetry_publisher,
                     records.create(
                         record_type="monitor_shutdown",
                         event_type="POWER_MONITOR_STOPPED",
@@ -1406,6 +1473,10 @@ def main() -> int:
 
     if args.max_samples is not None and args.max_samples <= 0:
         raise ConfigurationError("--max-samples must be positive")
+    if not 1 <= args.telemetry_port <= 65_535:
+        raise ConfigurationError("--telemetry-port must be from 1 to 65535")
+    if args.telemetry_host is not None and not args.telemetry_host.strip():
+        raise ConfigurationError("--telemetry-host cannot be empty")
 
     identity = MonitorIdentity(
         monitor_session_id=str(uuid.uuid4()),
@@ -1423,13 +1494,39 @@ def main() -> int:
     else:
         source = JetsonVddInSource(find_vdd_in_sensor(), config)
 
-    return run_monitor(
-        source,
-        config,
-        log_path,
-        identity=identity,
-        max_samples=args.max_samples,
+    telemetry_publisher = (
+        UdpTelemetryPublisher(
+            args.telemetry_host,
+            args.telemetry_port,
+        )
+        if args.telemetry_host is not None
+        else None
     )
+
+    try:
+        exit_code = run_monitor(
+            source,
+            config,
+            log_path,
+            identity=identity,
+            max_samples=args.max_samples,
+            telemetry_publisher=telemetry_publisher,
+        )
+    finally:
+        if telemetry_publisher is not None:
+            telemetry_publisher.close()
+
+    if (
+        telemetry_publisher is not None
+        and telemetry_publisher.failure_count
+    ):
+        print(
+            "POWER_TELEMETRY_SEND_FAILURES: "
+            f"{telemetry_publisher.failure_count}; "
+            f"last_error={telemetry_publisher.last_error}",
+            file=sys.stderr,
+        )
+    return exit_code
 
 
 if __name__ == "__main__":
