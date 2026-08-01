@@ -1,4 +1,4 @@
-"""Start the coordinator GUI wired to a TCP receiver (a real DUT, or local).
+"""Start the campaign coordinator GUI wired to a TCP receiver (real DUT or local).
 
 Point it at the board under test with --host:
 
@@ -8,13 +8,14 @@ Point it at the board under test with --host:
     python app_local_tcp.py --host 127.0.0.1          # a local test receiver
 
 The DUT's test_control.service listens on TCP 6000 and returns the SEE summary
-that the GUI then writes to results/test_<N>.csv. Unlike app.py (mock mode, which
-never leaves the laptop), this sends real commands over the network.
+that the GUI writes to results/test_<N>.csv. Unlike app.py (mock mode), this
+sends real commands over the network.
 """
 
 import argparse
 import tkinter as tk
 
+from coordinator.campaign_ui import apply_campaign_ui
 from coordinator.transport import TcpTransport
 from coordinator.ui import TestCoordinatorApp
 
@@ -80,13 +81,14 @@ def main() -> None:
         timeout_seconds=args.timeout,
     )
 
-    TestCoordinatorApp(
+    app = TestCoordinatorApp(
         master=root,
         transport=transport,
         see_log_root=args.see_log_root,
         pull_script=args.pull_script,
         pull_timeout_s=args.pull_timeout,
     )
+    apply_campaign_ui(app)
 
     root.mainloop()
 
