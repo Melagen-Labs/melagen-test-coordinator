@@ -96,20 +96,21 @@ def apply_campaign_ui_polished(app: Any) -> None:
             if isinstance(child, ttk.Button) and child.cget("text") in {"Beam ON", "Beam OFF"}:
                 _hide_widget(child)
 
-        estimated_label = _find_label_by_text(beam_frame, "Estimated Fluence:")
-        estimated_value = (
+        fluence_label = _find_label_by_text(beam_frame, "Estimated Fluence:")
+        fluence_value = (
             _label_for_variable(beam_frame, app.calculated_fluence_var)
             if hasattr(app, "calculated_fluence_var")
             else None
         )
-        if estimated_label is not None:
-            estimated_label.grid_configure(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 4))
-        if estimated_value is not None:
-            estimated_value.grid_configure(row=1, column=1, sticky="w", pady=(8, 4))
+        if fluence_label is not None:
+            fluence_label.configure(text="Fluence:")
+            fluence_label.grid_configure(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 4))
+        if fluence_value is not None:
+            fluence_value.grid_configure(row=1, column=1, sticky="w", pady=(8, 4))
 
         ttk.Label(
             beam_frame,
-            text="Estimated fluence = entered flux × active test runtime",
+            text="Calculated as: beam flux × active test runtime",
             font=("Segoe UI", 9),
         ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(2, 0))
 
@@ -175,7 +176,7 @@ def apply_campaign_ui_polished(app: Any) -> None:
             cancel_tick()
             tick()
             self._append_log(
-                "Estimated fluence calculation started from active test runtime."
+                "Fluence calculation started from active test runtime."
             )
 
     def polished_stop(self: Any, automatic: bool = False) -> None:
@@ -191,7 +192,7 @@ def apply_campaign_ui_polished(app: Any) -> None:
                 estimated_fluence_p_cm2=self.campaign_calculated_fluence,
             )
             self._append_log(
-                "Estimated fluence saved from active test runtime: "
+                "Fluence saved from active test runtime: "
                 f"{format_scientific(self.campaign_calculated_fluence)} p/cm²"
             )
 
@@ -202,5 +203,5 @@ def apply_campaign_ui_polished(app: Any) -> None:
 
     app._append_log(
         "Polished campaign layout loaded: compact beam parameters, runtime-based "
-        "estimated fluence, and streamlined operator controls."
+        "fluence, and streamlined operator controls."
     )
