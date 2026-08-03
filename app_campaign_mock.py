@@ -1,9 +1,8 @@
-"""Preview the 2026 campaign GUI without contacting a Jetson."""
+"""Preview the simplified campaign GUI without contacting a Jetson."""
 
 import tkinter as tk
 
-from coordinator.campaign_ui import apply_campaign_ui
-from coordinator.campaign_ui_v2 import apply_campaign_ui_v2
+from coordinator.campaign_ui_simple import apply_campaign_ui
 from coordinator.transport import MockTransport
 from coordinator.ui import TestCoordinatorApp
 
@@ -12,7 +11,6 @@ def main() -> None:
     root = tk.Tk()
     app = TestCoordinatorApp(master=root, transport=MockTransport())
     apply_campaign_ui(app)
-    apply_campaign_ui_v2(app)
     root.mainloop()
 
 
