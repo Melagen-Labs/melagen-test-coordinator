@@ -1,9 +1,10 @@
-"""Final visual cleanup and runtime-based fluence behavior.
+"""Final visual cleanup and authoritative runtime-based fluence behavior.
 
 Applied after ``campaign_ui_simple.apply_campaign_ui``. This layer removes
 operator beam ON/OFF controls and the facility-fluence field, then calculates
-estimated fluence from the active test runtime. It also tightens spacing and
-standardizes labels without changing the deployed DUT protocol.
+fluence from the interval in which the coordinator is actually ACTIVE. It also
+tightens spacing and standardizes labels without changing the deployed DUT
+protocol.
 """
 
 from __future__ import annotations
@@ -65,13 +66,12 @@ def _label_for_variable(parent: tk.Misc, variable: tk.Variable) -> ttk.Label | N
 
 
 def apply_campaign_ui_polished(app: Any) -> None:
-    """Apply the approved compact operator layout and runtime fluence model."""
+    """Apply the approved compact layout and authoritative runtime model."""
 
     beam_frame = _find_labelframe(app, "Beam Exposure")
     if beam_frame is not None:
         beam_frame.configure(text="Beam Parameters", padding=12)
 
-        # Remove controls that are no longer part of the approved workflow.
         for text in (
             "Beam Status:",
             "Beam-on Time:",
@@ -104,9 +104,20 @@ def apply_campaign_ui_polished(app: Any) -> None:
         )
         if fluence_label is not None:
             fluence_label.configure(text="Fluence:")
-            fluence_label.grid_configure(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 4))
+            fluence_label.grid_configure(
+                row=1,
+                column=0,
+                sticky="w",
+                padx=(0, 8),
+                pady=(8, 4),
+            )
         if fluence_value is not None:
-            fluence_value.grid_configure(row=1, column=1, sticky="w", pady=(8, 4))
+            fluence_value.grid_configure(
+                row=1,
+                column=1,
+                sticky="w",
+                pady=(8, 4),
+            )
 
         ttk.Label(
             beam_frame,
@@ -114,7 +125,6 @@ def apply_campaign_ui_polished(app: Any) -> None:
             font=("Segoe UI", 9),
         ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(2, 0))
 
-    # Improve typography and spacing across major sections.
     for child in app.winfo_children():
         if isinstance(child, ttk.LabelFrame):
             try:
@@ -130,11 +140,11 @@ def apply_campaign_ui_polished(app: Any) -> None:
     app.master.geometry("1080x860")
     app.master.minsize(940, 720)
 
-    # Runtime-based estimated fluence.
     app._runtime_fluence_started_at: float | None = None
     app._runtime_fluence_after_id: str | None = None
     app.campaign_runtime_seconds = 0.0
 
+    original_set_state = app._set_coordinator_state
     original_start = app._on_start_test
     original_stop = app._on_stop_test
 
@@ -151,6 +161,8 @@ def apply_campaign_ui_polished(app: Any) -> None:
             return
         elapsed = max(0.0, time.monotonic() - app._runtime_fluence_started_at)
         app.campaign_runtime_seconds = elapsed
+        # Older campaign layers consume this attribute when writing the single
+        # CAMPAIGN_FLUENCE_FINAL event and CSV metadata.
         app.campaign_beam_seconds = elapsed
         app.campaign_calculated_fluence = calculate_fluence(
             app.campaign_selected_flux,
@@ -165,9 +177,10 @@ def apply_campaign_ui_polished(app: Any) -> None:
         if app._runtime_fluence_started_at is not None:
             app._runtime_fluence_after_id = app.master.after(REFRESH_MS, tick)
 
-    def polished_start(self: Any) -> None:
-        original_start()
-        if self.coordinator_state.value == "active":
+    def authoritative_set_state(self: Any, new_state: Any) -> None:
+        original_set_state(new_state)
+        state_value = getattr(new_state, "value", str(new_state)).lower()
+        if state_value == "active" and self._runtime_fluence_started_at is None:
             self.campaign_runtime_seconds = 0.0
             self.campaign_beam_seconds = 0.0
             self.campaign_calculated_fluence = 0.0
@@ -176,32 +189,30 @@ def apply_campaign_ui_polished(app: Any) -> None:
             cancel_tick()
             tick()
             self._append_log(
-                "Fluence calculation started from active test runtime."
+                "Fluence calculation started when the coordinator entered ACTIVE."
             )
+
+    def polished_start(self: Any) -> None:
+        # ACTIVE timing is captured by authoritative_set_state at the exact state
+        # transition, before later metadata adapters return to this wrapper.
+        original_start()
 
     def polished_stop(self: Any, automatic: bool = False) -> None:
         refresh_runtime_fluence()
         self._runtime_fluence_started_at = None
         cancel_tick()
+        # The existing schema-cleanup layer writes the one authoritative
+        # CAMPAIGN_FLUENCE_FINAL event using campaign_beam_seconds and
+        # campaign_calculated_fluence. Do not write a duplicate event here.
         original_stop(automatic=automatic)
-        if self.coordinator_state.value == "idle":
-            self._record_event(
-                "CAMPAIGN_RUNTIME_FLUENCE_FINAL",
-                active_test_seconds=self.campaign_runtime_seconds,
-                flux_p_cm2_s=self.campaign_selected_flux,
-                estimated_fluence_p_cm2=self.campaign_calculated_fluence,
-            )
-            self._append_log(
-                "Fluence saved from active test runtime: "
-                f"{format_scientific(self.campaign_calculated_fluence)} p/cm²"
-            )
 
+    app._set_coordinator_state = MethodType(authoritative_set_state, app)
     app._on_start_test = MethodType(polished_start, app)
     app._on_stop_test = MethodType(polished_stop, app)
     app.start_button.configure(command=app._on_start_test)
     app.stop_button.configure(command=app._on_stop_test)
 
     app._append_log(
-        "Polished campaign layout loaded: compact beam parameters, runtime-based "
-        "fluence, and streamlined operator controls."
+        "Polished campaign layout loaded: compact beam parameters, ACTIVE-state "
+        "fluence timing, and streamlined operator controls."
     )
