@@ -3,6 +3,7 @@
 import tkinter as tk
 
 from coordinator.campaign_ui_final import apply_campaign_ui_final
+from coordinator.campaign_ui_polished import apply_campaign_ui_polished
 from coordinator.campaign_ui_simple import apply_campaign_ui
 from coordinator.transport import MockTransport
 from coordinator.ui import TestCoordinatorApp
@@ -13,6 +14,7 @@ def main() -> None:
     app = TestCoordinatorApp(master=root, transport=MockTransport())
     apply_campaign_ui(app)
     apply_campaign_ui_final(app)
+    apply_campaign_ui_polished(app)
     root.mainloop()
 
 
