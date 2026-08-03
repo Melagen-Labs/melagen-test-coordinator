@@ -11,6 +11,7 @@ Point it at the board under test with --host:
 import argparse
 import tkinter as tk
 
+from coordinator.campaign_ui_final import apply_campaign_ui_final
 from coordinator.campaign_ui_simple import apply_campaign_ui
 from coordinator.transport import TcpTransport
 from coordinator.ui import TestCoordinatorApp
@@ -49,6 +50,7 @@ def main() -> None:
         pull_timeout_s=args.pull_timeout,
     )
     apply_campaign_ui(app)
+    apply_campaign_ui_final(app)
     root.mainloop()
 
 
