@@ -3,9 +3,9 @@
 Point it at the board under test with --host:
 
     python app_local_tcp.py --host 192.168.1.20      # direct Ethernet
-    python app_local_tcp.py --host orin-nano-03       # Tailscale MagicDNS name
-    python app_local_tcp.py --host 100.x.y.z          # Tailscale IP
-    python app_local_tcp.py --host 127.0.0.1          # a local test receiver
+    python app_local_tcp.py --host orin-nano-03      # Tailscale MagicDNS name
+    python app_local_tcp.py --host 100.x.y.z         # Tailscale IP
+    python app_local_tcp.py --host 127.0.0.1         # a local test receiver
 
 The DUT's test_control.service listens on TCP 6000 and returns the SEE summary
 that the GUI writes to results/test_<N>.csv. Unlike app.py (mock mode), this
@@ -16,6 +16,7 @@ import argparse
 import tkinter as tk
 
 from coordinator.campaign_ui import apply_campaign_ui
+from coordinator.campaign_ui_v2 import apply_campaign_ui_v2
 from coordinator.transport import TcpTransport
 from coordinator.ui import TestCoordinatorApp
 
@@ -23,7 +24,7 @@ from coordinator.ui import TestCoordinatorApp
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Launch the Jetson Proton Test Coordinator GUI over TCP."
+            "Launch the Melagen Lab Test Coordinator GUI over TCP."
         ),
     )
     parser.add_argument(
@@ -89,6 +90,7 @@ def main() -> None:
         pull_timeout_s=args.pull_timeout,
     )
     apply_campaign_ui(app)
+    apply_campaign_ui_v2(app)
 
     root.mainloop()
 
